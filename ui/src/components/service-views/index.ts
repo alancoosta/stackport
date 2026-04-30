@@ -13,6 +13,7 @@ import { S3Browser } from './S3Browser'
 import { DynamoDBBrowser } from './DynamoDBBrowser'
 import { LambdaBrowser } from './LambdaBrowser'
 import { SQSBrowser } from './SQSBrowser'
+import { SNSBrowser } from './SNSBrowser'
 import { IAMBrowser } from './IAMBrowser'
 import { EC2Browser } from './EC2Browser'
 import { LogsBrowser } from './LogsBrowser'
@@ -23,6 +24,7 @@ export const SERVICE_VIEWS: Record<string, ComponentType> = {
   dynamodb: DynamoDBBrowser,
   lambda: LambdaBrowser,
   sqs: SQSBrowser,
+  sns: SNSBrowser,
   iam: IAMBrowser,
   ec2: EC2Browser,
   logs: LogsBrowser,

@@ -120,6 +120,15 @@ export interface S3CreateFolderResponse {
   prefix: string
 }
 
+export interface S3CreateBucketRequest {
+  name: string
+}
+
+export interface S3CreateBucketResponse {
+  bucket: string
+  region: string
+}
+
 export interface DynamoDBTable {
   name: string
   status: string
@@ -384,6 +393,23 @@ export interface SQSCreateQueueResponse {
   dlqQueueName?: string  // Name of the auto-created DLQ, if any
 }
 
+export interface SQSCreateQueueBatchRequest {
+  queues: SQSCreateQueueRequest[]
+}
+
+export interface SQSCreateQueueBatchResponse {
+  successful: Array<{
+    queueName: string
+    queueUrl: string
+    queueArn: string
+    dlqQueueName?: string
+  }>
+  failed: Array<{
+    name: string
+    error: string
+  }>
+}
+
 export interface SQSBatchSendMessageEntry {
   id: string
   messageBody: string
@@ -432,6 +458,160 @@ export interface SQSFavoriteMessage {
 
 export interface SQSFavoriteMessages {
   messages: SQSFavoriteMessage[]
+}
+
+// SNS Types
+export interface SNSTopic {
+  name: string
+  arn: string
+  subscriptionCount: number
+  type: 'Standard' | 'FIFO'
+  displayName?: string
+  owner: string
+  tags: Record<string, string>
+}
+
+export interface SNSTopicDetail extends SNSTopic {
+  deliveryPolicy?: Record<string, unknown>
+  effectiveDeliveryPolicy?: Record<string, unknown>
+  policy?: Record<string, unknown>
+  applicationSuccessFeedbackRoleArn?: string
+  applicationSuccessFeedbackSampleRate?: string
+  applicationFailureFeedbackRoleArn?: string
+  httpSuccessFeedbackRoleArn?: string
+  httpSuccessFeedbackSampleRate?: string
+  httpFailureFeedbackRoleArn?: string
+  lambdaSuccessFeedbackRoleArn?: string
+  lambdaSuccessFeedbackSampleRate?: string
+  lambdaFailureFeedbackRoleArn?: string
+  sqsSuccessFeedbackRoleArn?: string
+  sqsSuccessFeedbackSampleRate?: string
+  sqsFailureFeedbackRoleArn?: string
+  kmsMasterKeyId?: string
+  signatureVersion?: string
+  tracingConfig?: string
+  contentBasedDeduplication?: boolean
+}
+
+export interface SNSSubscription {
+  subscriptionArn: string
+  topicArn: string
+  protocol: 'http' | 'https' | 'email' | 'email-json' | 'sms' | 'sqs' | 'application' | 'lambda'
+  endpoint: string
+  owner: string
+  status: 'pending' | 'confirmed' | 'deleted'
+  filterPolicy?: Record<string, unknown>
+  rawMessageDelivery?: boolean
+  redrivePolicy?: {
+    deadLetterTargetArn: string
+  }
+  subscriptionRoleArn?: string
+  deliveryPolicy?: Record<string, unknown>
+  effectiveDeliveryPolicy?: Record<string, unknown>
+}
+
+export interface SNSPublishRequest {
+  message: string
+  subject?: string
+  messageStructure?: 'json' | 'string'
+  messageAttributes?: Record<string, {
+    stringValue?: string
+    binaryValue?: string
+    dataType: string
+  }>
+  messageDeduplicationId?: string  // FIFO topics
+  messageGroupId?: string  // FIFO topics
+}
+
+export interface SNSPublishResponse {
+  messageId: string
+  sequenceNumber?: string  // FIFO topics
+}
+
+export interface SNSBatchPublishEntry {
+  id: string
+  message: string
+  subject?: string
+  messageStructure?: 'json' | 'string'
+  messageAttributes?: Record<string, {
+    stringValue?: string
+    binaryValue?: string
+    dataType: string
+  }>
+  messageDeduplicationId?: string
+  messageGroupId?: string
+}
+
+export interface SNSBatchPublishRequest {
+  entries: SNSBatchPublishEntry[]
+}
+
+export interface SNSBatchPublishResponse {
+  successful: Array<{ id: string; messageId: string; sequenceNumber?: string }>
+  failed: Array<{ id: string; code: string; message: string }>
+}
+
+export interface SNSSubscribeRequest {
+  protocol: string
+  endpoint: string
+  filterPolicy?: Record<string, unknown>
+  rawMessageDelivery?: boolean
+  redrivePolicy?: {
+    deadLetterTargetArn: string
+  }
+  subscriptionRoleArn?: string
+  deliveryPolicy?: Record<string, unknown>
+}
+
+export interface SNSPlatformApplication {
+  applicationArn: string
+  platform: string  // 'APNS' | 'APNS_SANDBOX' | 'GCM' | 'ADM' | 'BAIDU' | 'WNS' | 'MPNS'
+  attributes: {
+    AppleCertificate?: string
+    ApplePrivateKey?: string
+    Enabled?: string
+    EventEndpointCreated?: string
+    EventEndpointDeleted?: string
+    EventEndpointUpdated?: string
+    FeedbackRoleArn?: string
+    PlatformCredential?: string
+    PlatformPrincipal?: string
+  }
+}
+
+export interface SNSPlatformEndpoint {
+  endpointArn: string
+  attributes: {
+    Token?: string
+    Enabled?: string
+    CustomUserData?: string
+  }
+}
+
+export interface SNSCreateTopicRequest {
+  name: string
+  displayName?: string
+  fifo?: boolean
+  contentBasedDeduplication?: boolean
+  tags?: Record<string, string>
+  deliveryPolicy?: Record<string, unknown>
+  kmsMasterKeyId?: string
+}
+
+export interface SNSTopicsResponse {
+  topics: SNSTopic[]
+}
+
+export interface SNSSubscriptionsResponse {
+  subscriptions: SNSSubscription[]
+}
+
+export interface SNSPlatformApplicationsResponse {
+  applications: SNSPlatformApplication[]
+}
+
+export interface SNSPlatformEndpointsResponse {
+  endpoints: SNSPlatformEndpoint[]
 }
 
 export interface IAMUser {

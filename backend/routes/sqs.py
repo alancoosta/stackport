@@ -246,6 +246,50 @@ def create_queue(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/queues/batch")
+def create_queues_batch(body: dict[str, Any]) -> dict[str, Any]:
+    """Create multiple SQS queues in one operation.
+
+    Request body:
+    {
+      "queues": [
+        { "queueName": "queue1", "queueType": "Standard", ... },
+        { "queueName": "queue2", "queueType": "FIFO", ... }
+      ]
+    }
+
+    Max 10 queues per batch. Returns success/failure for each queue.
+    """
+    queues = body.get("queues", [])
+    if not queues:
+        raise HTTPException(status_code=400, detail="queues is required")
+
+    results = {"successful": [], "failed": []}
+
+    for queue_config in queues:
+        try:
+            # Reuse existing create_queue logic by calling it directly
+            result = create_queue(queue_config)
+            results["successful"].append({
+                "queueName": result["queueName"],
+                "queueUrl": result["queueUrl"],
+                "queueArn": result["queueArn"],
+                "dlqQueueName": result.get("dlqQueueName")
+            })
+        except HTTPException as e:
+            results["failed"].append({
+                "name": queue_config.get("queueName", "unknown"),
+                "error": e.detail
+            })
+        except Exception as e:
+            results["failed"].append({
+                "name": queue_config.get("queueName", "unknown"),
+                "error": str(e)
+            })
+
+    return results
+
+
 @router.get("/queues/{queue_name}")
 def get_queue_detail(queue_name: str, endpoint_url: str | None = Depends(get_endpoint_url)) -> dict[str, Any]:
     """Get detailed attributes and tags for a specific queue."""

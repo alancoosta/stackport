@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import LOG_LEVEL, STACKPORT_ALLOW_WRITES, STACKPORT_PORT
-from backend.routes import dynamodb, ec2, endpoints, iam, lambda_svc, logs, resources, s3, secretsmanager, sqs, stats, tags
+from backend.routes import dynamodb, ec2, endpoints, iam, lambda_svc, logs, resources, s3, secretsmanager, sns, sqs, stats, tags
 from backend.websocket import probe_loop, websocket_endpoint
 
 
@@ -94,6 +94,7 @@ app.include_router(s3.router, prefix="/api/s3")
 app.include_router(dynamodb.router, prefix="/api/dynamodb")
 app.include_router(lambda_svc.router, prefix="/api/lambda", tags=["lambda"])
 app.include_router(sqs.router, prefix="/api/sqs", tags=["sqs"])
+app.include_router(sns.router, prefix="/api/sns", tags=["sns"])
 app.include_router(iam.router, prefix="/api/iam", tags=["iam"])
 app.include_router(ec2.router, prefix="/api/ec2", tags=["ec2"])
 app.include_router(logs.router, prefix="/api/logs", tags=["logs"])

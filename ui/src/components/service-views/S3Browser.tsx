@@ -8,7 +8,9 @@ import {
   uploadS3Object,
   deleteS3Object,
   deleteS3ObjectsBatch,
+  deleteS3Bucket,
   createS3Folder,
+  createS3Bucket,
   fetchS3UploadConfig,
   fetchResourceTags,
   updateResourceTags,
@@ -16,7 +18,6 @@ import {
 import { useEndpoint } from '@/hooks/useEndpoint'
 import type { S3Bucket, S3File, S3ObjectsResponse, S3ObjectDetail } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
@@ -37,6 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Separator } from '@/components/ui/separator'
 import { EmptyState } from '@/components/EmptyState'
 import { ExportDropdown } from '@/components/ExportDropdown'
+import { ImportButton } from '@/components/ImportButton'
 import { JsonViewer } from '@/components/JsonViewer'
 import { Breadcrumb, createHomeSegment, type BreadcrumbSegment } from '@/components/Breadcrumb'
 import { getServiceIcon } from '@/lib/service-icons'
@@ -66,6 +68,10 @@ import {
   Upload,
   Trash2,
   FolderPlus,
+  Plus,
+  Copy,
+  Check,
+  Link,
 } from 'lucide-react'
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
@@ -163,6 +169,32 @@ function PaginationBar({
   )
 }
 
+function CopyableUrl({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`
+  const handleCopy = () => {
+    const ta = document.createElement('textarea')
+    ta.value = fullUrl
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <div className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs">
+      <Link className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="truncate font-mono text-muted-foreground min-w-0 flex-1" title={fullUrl}>{fullUrl}</span>
+      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={handleCopy} aria-label="Copy link">
+        {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+      </Button>
+    </div>
+  )
+}
+
 type ConfirmDialog =
   | { type: 'delete-file'; key: string }
   | { type: 'delete-bulk' }
@@ -199,6 +231,11 @@ export function S3Browser() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null)
   const [folderDialogOpen, setFolderDialogOpen] = useState(false)
   const [newFolderSegment, setNewFolderSegment] = useState('')
+  const [bucketDialogOpen, setBucketDialogOpen] = useState(false)
+  const [newBucketName, setNewBucketName] = useState('')
+  const [deleteBucketOpen, setDeleteBucketOpen] = useState(false)
+  const [bucketToDelete, setBucketToDelete] = useState<string | null>(null)
+  const [deleteBucketConfirmName, setDeleteBucketConfirmName] = useState('')
   const [bucketTags, setBucketTags] = useState<Record<string, string>>({})
 
   // Fetch bucket tags when selectedBucket changes
@@ -523,163 +560,237 @@ export function S3Browser() {
     }
   }
 
-  // Bucket list view
-  if (!selectedBucket) {
-    if (bucketsLoading) {
-      return (
-        <div className="space-y-4">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-      )
+  const submitCreateBucket = async () => {
+    const name = newBucketName.trim().toLowerCase()
+    if (!name) {
+      toast.error('Enter a bucket name')
+      return
+    }
+    // Basic validation matching backend rules
+    if (!/^[a-z0-9.-]+$/.test(name)) {
+      toast.error('Bucket name can only contain lowercase letters, numbers, dots, and hyphens')
+      return
+    }
+    if (name.length < 3 || name.length > 63) {
+      toast.error('Bucket name must be between 3 and 63 characters')
+      return
+    }
+    if (name.startsWith('.') || name.endsWith('.')) {
+      toast.error('Bucket name must start and end with a letter or number')
+      return
+    }
+    if (name.includes('..')) {
+      toast.error('Bucket name cannot contain ".."')
+      return
     }
 
-    if (buckets.length === 0) {
-      return (
-        <EmptyState
-          icon={HardDrive}
-          title="No S3 buckets"
-          description="Create a bucket to see it here."
-        />
-      )
+    try {
+      await createS3Bucket({ name }, activeEndpoint)
+      toast.success(`Created bucket ${name}`)
+      setBucketDialogOpen(false)
+      setNewBucketName('')
+      await refreshBuckets()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not create bucket')
     }
-
-    return (
-      <div className="space-y-4">
-        <Breadcrumb segments={[createHomeSegment(), { label: 'S3', icon: getServiceIcon('s3') }]} />
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <HardDrive className="h-5 w-5 text-muted-foreground" />
-            <h2 className="text-xl font-bold">S3 Buckets</h2>
-            <Badge variant="secondary">{buckets.length}</Badge>
-            {filteredBuckets.length > 0 && <ExportDropdown service="s3" resourceType="buckets" data={filteredBuckets as unknown as Record<string, unknown>[]} />}
-          </div>
-          {buckets.length > 0 && (
-            <div className="flex items-center gap-2">
-              <div className="relative w-56">
-                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  ref={bucketSearchRef}
-                  placeholder="Search buckets..."
-                  value={bucketSearch}
-                  onChange={(e) => { setBucketSearch(e.target.value); setBucketPage(0) }}
-                  className="pl-8 h-8 text-sm"
-                  aria-label="Search buckets"
-                />
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={async () => { setRefreshing(true); await refreshBuckets(); setRefreshing(false) }}
-                title="Refresh"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {filteredBuckets.length === 0 && bucketSearch ? (
-          <EmptyState
-            icon={Search}
-            title="No matching buckets"
-            description={`No buckets match "${bucketSearch}".`}
-          />
-        ) : (
-        <>
-        <div className="grid gap-3">
-          {paginatedBuckets.map((bkt) => (
-            <Card
-              key={bkt.name}
-              className="cursor-pointer hover:bg-accent/50 transition-colors"
-              onClick={() => { setSelectedBucket(bkt.name); setPrefix('') }}
-            >
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <HardDrive className="h-5 w-5 text-primary flex-shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm truncate">{bkt.name}</div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
-                        <span className="flex items-center gap-1"><Globe className="h-3 w-3" />{bkt.region}</span>
-                        <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDate(bkt.created)}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 flex-shrink-0">
-                    <div className="text-right">
-                      <div className="text-sm font-medium">{bkt.object_count}</div>
-                      <div className="text-xs text-muted-foreground">objects</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-medium">{formatBytes(bkt.total_size)}</div>
-                      <div className="text-xs text-muted-foreground">total</div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {bkt.versioning === 'Enabled' && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Shield className="h-3.5 w-3.5 text-emerald-500" />
-                          </TooltipTrigger>
-                          <TooltipContent>Versioning enabled</TooltipContent>
-                        </Tooltip>
-                      )}
-                      {bkt.encryption === 'Enabled' && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Lock className="h-3.5 w-3.5 text-blue-500" />
-                          </TooltipTrigger>
-                          <TooltipContent>Encryption enabled</TooltipContent>
-                        </Tooltip>
-                      )}
-                      <TagCountBadge count={Object.keys(bkt.tags).length} />
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        {filteredBuckets.length > pageSize && (
-          <PaginationBar
-            page={bucketPage}
-            totalPages={bucketTotalPages}
-            totalItems={filteredBuckets.length}
-            pageSize={pageSize}
-            onPageChange={setBucketPage}
-            onPageSizeChange={(size) => { setPageSize(size); setBucketPage(0) }}
-          />
-        )}
-        </>
-        )}
-      </div>
-    )
   }
 
-  // Object browser view — fill ResourceBrowser pane (flex chain from Layout main)
+  const submitDeleteBucket = async () => {
+    if (!bucketToDelete || deleteBucketConfirmName !== bucketToDelete) {
+      toast.error('Bucket name does not match')
+      return
+    }
+    try {
+      await deleteS3Bucket(bucketToDelete, activeEndpoint)
+      toast.success(`Bucket ${bucketToDelete} deleted`)
+      setDeleteBucketOpen(false)
+      setBucketToDelete(null)
+      setDeleteBucketConfirmName('')
+      await refreshBuckets()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete bucket')
+    }
+  }
+
+  // Main render — dialogs/sheets are always available
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
-      {/* Breadcrumb navigation */}
-      <div className="flex shrink-0 items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => setSelectedBucket(null)} className="h-8">
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back
-        </Button>
-        <Breadcrumb segments={breadcrumbSegments} />
-      </div>
+    <>
+      {/* Bucket list view */}
+      {!selectedBucket ? (
+        <>
+          {bucketsLoading ? (
+            <div className="space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-24 w-full" />
+              ))}
+            </div>
+          ) : buckets.length === 0 ? (
+            <>
+              <Breadcrumb segments={[createHomeSegment(), { label: 'S3', icon: getServiceIcon('s3') }]} />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="h-5 w-5 text-muted-foreground" />
+                  <h2 className="text-xl font-bold">S3 Buckets</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <ImportButton service="s3" onComplete={() => void refreshBuckets()} />
+                  <Button onClick={() => setBucketDialogOpen(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create bucket
+                  </Button>
+                </div>
+              </div>
+              <EmptyState
+                icon={HardDrive}
+                title="No S3 buckets"
+                description="Create a bucket to start storing objects in S3."
+              />
+            </>
+          ) : (
+            <div className="space-y-4">
+              <Breadcrumb segments={[createHomeSegment(), { label: 'S3', icon: getServiceIcon('s3') }]} />
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    ref={bucketSearchRef}
+                    placeholder="Search buckets..."
+                    value={bucketSearch}
+                    onChange={(e) => { setBucketSearch(e.target.value); setBucketPage(0) }}
+                    className="pl-9 h-9"
+                    aria-label="Search buckets"
+                  />
+                </div>
+                <ImportButton service="s3" onComplete={() => void refreshBuckets()} />
+                {filteredBuckets.length > 0 && <ExportDropdown service="s3" resourceType="buckets" data={filteredBuckets as unknown as Record<string, unknown>[]} />}
+                <Button onClick={() => setBucketDialogOpen(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create bucket
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={async () => { setRefreshing(true); await refreshBuckets(); setRefreshing(false) }}
+                  title="Refresh"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
 
-      <input
-        ref={fileUploadRef}
-        type="file"
-        className="hidden"
-        aria-hidden
-        onChange={onFileInputChange}
-      />
+              {filteredBuckets.length === 0 && bucketSearch ? (
+                <EmptyState
+                  icon={Search}
+                  title="No matching buckets"
+                  description={`No buckets match "${bucketSearch}".`}
+                />
+              ) : (
+                <>
+                <div className="grid gap-3">
+                  {paginatedBuckets.map((bkt) => (
+                    <Card
+                      key={bkt.name}
+                      className="cursor-pointer hover:bg-accent/50 transition-colors"
+                      onClick={() => { setSelectedBucket(bkt.name); setPrefix('') }}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <HardDrive className="h-5 w-5 text-primary flex-shrink-0" />
+                            <div className="min-w-0">
+                              <div className="font-medium text-sm truncate">{bkt.name}</div>
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                                <span className="flex items-center gap-1"><Globe className="h-3 w-3" />{bkt.region}</span>
+                                <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDate(bkt.created)}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 flex-shrink-0">
+                            <div className="text-right">
+                              <div className="text-sm font-medium">{bkt.object_count}</div>
+                              <div className="text-xs text-muted-foreground">objects</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm font-medium">{formatBytes(bkt.total_size)}</div>
+                              <div className="text-xs text-muted-foreground">total</div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {bkt.versioning === 'Enabled' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Shield className="h-3.5 w-3.5 text-emerald-500" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>Versioning enabled</TooltipContent>
+                                </Tooltip>
+                              )}
+                              {bkt.encryption === 'Enabled' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Lock className="h-3.5 w-3.5 text-blue-500" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>Encryption enabled</TooltipContent>
+                                </Tooltip>
+                              )}
+                              <TagCountBadge count={Object.keys(bkt.tags).length} />
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              aria-label={`Delete bucket ${bkt.name}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setBucketToDelete(bkt.name)
+                                setDeleteBucketConfirmName('')
+                                setDeleteBucketOpen(true)
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+                {filteredBuckets.length > pageSize && (
+                  <PaginationBar
+                    page={bucketPage}
+                    totalPages={bucketTotalPages}
+                    totalItems={filteredBuckets.length}
+                    pageSize={pageSize}
+                    onPageChange={setBucketPage}
+                    onPageSizeChange={(size) => { setPageSize(size); setBucketPage(0) }}
+                  />
+                )}
+                </>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        // Object browser view — fill ResourceBrowser pane (flex chain from Layout main)
+        <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+          {/* Breadcrumb navigation */}
+          <div className="flex shrink-0 items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedBucket(null)} className="h-8">
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Back
+            </Button>
+            <Breadcrumb segments={breadcrumbSegments} />
+          </div>
 
-      <Tabs defaultValue="objects" className="flex-1 flex flex-col min-h-0">
+          <input
+            ref={fileUploadRef}
+            type="file"
+            className="hidden"
+            aria-hidden
+            onChange={onFileInputChange}
+          />
+
+          <Tabs defaultValue="objects" className="flex-1 flex flex-col min-h-0">
         <TabsList className="w-fit">
           <TabsTrigger value="objects">Objects</TabsTrigger>
           <TabsTrigger value="tags">Tags</TabsTrigger>
@@ -961,6 +1072,8 @@ export function S3Browser() {
           />
         </TabsContent>
       </Tabs>
+        </div>
+      )}
 
       <Dialog
         open={uploadProgress !== null}
@@ -1060,6 +1173,115 @@ export function S3Browser() {
         </DialogContent>
       </Dialog>
 
+      <Sheet open={bucketDialogOpen} onOpenChange={setBucketDialogOpen}>
+        <SheetContent className="sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5" />
+              Create S3 Bucket
+            </SheetTitle>
+          </SheetHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="s3-new-bucket">Bucket name</Label>
+              <Input
+                id="s3-new-bucket"
+                value={newBucketName}
+                onChange={(e) => setNewBucketName(e.target.value)}
+                placeholder="my-bucket-name"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitCreateBucket()
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Bucket names must be globally unique and follow S3 naming rules.
+              </p>
+            </div>
+
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Naming requirements:</p>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>3-63 characters long</li>
+                <li>Lowercase letters, numbers, dots, and hyphens only</li>
+                <li>Must start and end with a letter or number</li>
+                <li>Cannot contain consecutive dots</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setBucketDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void submitCreateBucket()}>
+              Create Bucket
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={deleteBucketOpen} onOpenChange={(open) => {
+        setDeleteBucketOpen(open)
+        if (!open) {
+          setBucketToDelete(null)
+          setDeleteBucketConfirmName('')
+        }
+      }}>
+        <SheetContent className="sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Delete S3 Bucket
+            </SheetTitle>
+            <SheetDescription>
+              This action cannot be undone. Please type the bucket name to confirm.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="rounded-md bg-destructive/10 p-4 text-sm">
+              <p className="font-medium text-destructive">Warning:</p>
+              <ul className="mt-2 list-disc pl-4 space-y-1 text-destructive/80">
+                <li>The bucket must be empty before it can be deleted</li>
+                <li>This action cannot be undone</li>
+                <li>All bucket data will be permanently lost</li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="delete-bucket-confirm">Type <span className="font-mono font-medium">{bucketToDelete}</span> to confirm</Label>
+              <Input
+                id="delete-bucket-confirm"
+                value={deleteBucketConfirmName}
+                onChange={(e) => setDeleteBucketConfirmName(e.target.value)}
+                placeholder={bucketToDelete || 'Bucket name'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && deleteBucketConfirmName === bucketToDelete) {
+                    void submitDeleteBucket()
+                  }
+                }}
+                className="font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setDeleteBucketOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteBucketConfirmName !== bucketToDelete}
+              onClick={() => void submitDeleteBucket()}
+            >
+              Delete Bucket
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Object detail Sheet */}
       <Sheet open={!!objectDetail} onOpenChange={(open) => !open && setObjectDetail(null)}>
         <SheetContent className="sm:max-w-lg overflow-auto">
@@ -1077,6 +1299,7 @@ export function S3Browser() {
                     Download ({formatBytes(objectDetail.size)})
                   </a>
                 </Button>
+                <CopyableUrl url={getS3DownloadUrl(objectDetail.bucket, objectDetail.key, activeEndpoint)} />
                 <Button
                   type="button"
                   variant="destructive"
@@ -1172,6 +1395,6 @@ export function S3Browser() {
           )}
         </SheetContent>
       </Sheet>
-    </div>
+    </>
   )
 }

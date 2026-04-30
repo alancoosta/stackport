@@ -17,6 +17,8 @@ import type {
   S3DeleteObjectResponse,
   S3DeleteBatchResponse,
   S3CreateFolderResponse,
+  S3CreateBucketRequest,
+  S3CreateBucketResponse,
   DynamoDBTable,
   DynamoDBTableDetail,
   DynamoDBScanResponse,
@@ -39,6 +41,8 @@ import type {
   SQSBatchDeleteRequest,
   SQSCreateQueueRequest,
   SQSCreateQueueResponse,
+  SQSCreateQueueBatchRequest,
+  SQSCreateQueueBatchResponse,
   SQSUpdateAttributesRequest,
   RedrivePolicy,
   IAMUser,
@@ -60,6 +64,17 @@ import type {
   LogGroupsResponse,
   LogStreamsResponse,
   LogEventsResponse,
+  SNSTopicDetail,
+  SNSPublishRequest,
+  SNSPublishResponse,
+  SNSBatchPublishRequest,
+  SNSBatchPublishResponse,
+  SNSSubscribeRequest,
+  SNSCreateTopicRequest,
+  SNSTopicsResponse,
+  SNSSubscriptionsResponse,
+  SNSPlatformApplicationsResponse,
+  SNSPlatformEndpointsResponse,
 } from './types'
 
 const API_BASE = '/api'
@@ -231,6 +246,24 @@ export async function createS3Folder(bucket: string, folderPrefix: string, endpo
   return res.json() as Promise<S3CreateFolderResponse>
 }
 
+export async function createS3Bucket(request: S3CreateBucketRequest, endpoint?: string | null): Promise<S3CreateBucketResponse> {
+  const url = buildUrl('/s3/buckets', endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json() as Promise<S3CreateBucketResponse>
+}
+
+export async function deleteS3Bucket(name: string, endpoint?: string | null): Promise<{ bucket: string; deleted: boolean }> {
+  const url = buildUrl(`/s3/buckets/${encodeURIComponent(name)}`, endpoint)
+  const res = await fetch(url, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json() as Promise<{ bucket: string; deleted: boolean }>
+}
+
 // --- DynamoDB ---
 
 export async function fetchDynamoDBTables(endpoint?: string | null): Promise<{ tables: DynamoDBTable[] }> {
@@ -360,6 +393,16 @@ export async function createSQSQueue(request: SQSCreateQueueRequest): Promise<SQ
   return res.json()
 }
 
+export async function createSQSQueuesBatch(request: SQSCreateQueueBatchRequest): Promise<SQSCreateQueueBatchResponse> {
+  const res = await fetch(`${API_BASE}/sqs/queues/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
 export async function deleteSQSQueue(queueName: string): Promise<void> {
   const res = await fetch(`${API_BASE}/sqs/queues/${encodeURIComponent(queueName)}`, {
     method: 'DELETE',
@@ -414,6 +457,199 @@ export async function updateSQSRedrivePolicy(
   if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
   return res.json()
 }
+
+// --- SNS ---
+
+// Topics
+export async function fetchSNSTopics(endpoint?: string | null): Promise<SNSTopicsResponse> {
+  return fetchJSON<SNSTopicsResponse>(buildUrl('/sns/topics', endpoint))
+}
+
+export async function fetchSNSTopicDetail(topicArn: string, endpoint?: string | null): Promise<SNSTopicDetail> {
+  return fetchJSON<SNSTopicDetail>(buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}`, endpoint))
+}
+
+export async function createSNSTopic(request: SNSCreateTopicRequest, endpoint?: string | null): Promise<{ arn: string; name: string }> {
+  const url = buildUrl('/sns/topics', endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function deleteSNSTopic(topicArn: string, endpoint?: string | null): Promise<void> {
+  const url = buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}`, endpoint)
+  const res = await fetch(url, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+}
+
+export async function updateSNSTopicAttributes(
+  topicArn: string,
+  attributes: Record<string, unknown>,
+  endpoint?: string | null
+): Promise<{ success: boolean; message: string }> {
+  const url = buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}/attributes`, endpoint)
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(attributes),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function updateSNSTopicTags(
+  topicArn: string,
+  tags: Record<string, string>,
+  endpoint?: string | null
+): Promise<{ success: boolean; message: string }> {
+  const url = buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}/tags`, endpoint)
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tags }),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+// Subscriptions
+export async function fetchSNSSubscriptions(
+  topicArn: string,
+  filters?: { protocol?: string },
+  endpoint?: string | null
+): Promise<SNSSubscriptionsResponse> {
+  const params = filters?.protocol ? new URLSearchParams({ protocol: filters.protocol }) : undefined
+  return fetchJSON<SNSSubscriptionsResponse>(buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}/subscriptions`, endpoint, params))
+}
+
+export async function createSNSSubscription(
+  topicArn: string,
+  request: SNSSubscribeRequest,
+  endpoint?: string | null
+): Promise<{ subscriptionArn: string; message?: string }> {
+  const url = buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}/subscriptions`, endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function deleteSNSSubscription(subscriptionArn: string, endpoint?: string | null): Promise<void> {
+  const url = buildUrl(`/sns/subscriptions/${encodeURIComponent(subscriptionArn)}`, endpoint)
+  const res = await fetch(url, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+}
+
+export async function updateSNSSubscriptionAttributes(
+  subscriptionArn: string,
+  attributes: Record<string, unknown>,
+  endpoint?: string | null
+): Promise<{ success: boolean; message: string }> {
+  const url = buildUrl(`/sns/subscriptions/${encodeURIComponent(subscriptionArn)}/attributes`, endpoint)
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(attributes),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+// Publishing
+export async function publishSNSMessage(
+  topicArn: string,
+  request: SNSPublishRequest,
+  endpoint?: string | null
+): Promise<SNSPublishResponse> {
+  const url = buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}/publish`, endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function publishSNSMessagesBatch(
+  topicArn: string,
+  request: SNSBatchPublishRequest,
+  endpoint?: string | null
+): Promise<SNSBatchPublishResponse> {
+  const url = buildUrl(`/sns/topics/${encodeURIComponent(topicArn)}/publish/batch`, endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+// Platform Applications
+export async function fetchSNSPlatformApplications(endpoint?: string | null): Promise<SNSPlatformApplicationsResponse> {
+  return fetchJSON<SNSPlatformApplicationsResponse>(buildUrl('/sns/platform-applications', endpoint))
+}
+
+export async function createSNSPlatformApplication(
+  name: string,
+  platform: string,
+  attributes: Record<string, string>,
+  endpoint?: string | null
+): Promise<{ applicationArn: string }> {
+  const url = buildUrl('/sns/platform-applications', endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, platform, attributes }),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function deleteSNSPlatformApplication(applicationArn: string, endpoint?: string | null): Promise<void> {
+  const url = buildUrl(`/sns/platform-applications/${encodeURIComponent(applicationArn)}`, endpoint)
+  const res = await fetch(url, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+}
+
+export async function fetchSNSPlatformEndpoints(
+  applicationArn: string,
+  endpoint?: string | null
+): Promise<SNSPlatformEndpointsResponse> {
+  return fetchJSON<SNSPlatformEndpointsResponse>(buildUrl(`/sns/platform-applications/${encodeURIComponent(applicationArn)}/endpoints`, endpoint))
+}
+
+export async function createSNSPlatformEndpoint(
+  applicationArn: string,
+  token: string,
+  customUserData?: string,
+  endpoint?: string | null
+): Promise<{ endpointArn: string }> {
+  const url = buildUrl(`/sns/platform-applications/${encodeURIComponent(applicationArn)}/endpoints`, endpoint)
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, customUserData }),
+  })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+  return res.json()
+}
+
+export async function deleteSNSPlatformEndpoint(endpointArn: string, endpoint?: string | null): Promise<void> {
+  const url = buildUrl(`/sns/platform-endpoints/${encodeURIComponent(endpointArn)}`, endpoint)
+  const res = await fetch(url, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`)
+}
+
+// --- IAM ---
 
 export async function fetchIAMUsers(endpoint?: string | null): Promise<{ users: IAMUser[] }> {
   return fetchJSON<{ users: IAMUser[] }>(buildUrl('/iam/users', endpoint))

@@ -14,7 +14,8 @@ import {
   sendSQSMessagesBatch,
   deleteSQSMessagesBatch,
   updateSQSRedrivePolicy,
-  updateResourceTags
+  updateResourceTags,
+  createSQSQueuesBatch
 } from '@/lib/api'
 import type {
   SQSQueue,
@@ -22,6 +23,7 @@ import type {
   SQSMessage,
   SQSSendMessageRequest,
   SQSCreateQueueRequest,
+  SQSCreateQueueBatchRequest,
   SQSBatchSendRequest,
   SQSUpdateAttributesRequest,
   SQSFavoriteMessage,
@@ -47,6 +49,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { ExportDropdown } from '@/components/ExportDropdown'
+import { ImportButton } from '@/components/ImportButton'
 import { toast } from 'sonner'
 import {
   Inbox,
@@ -65,6 +68,7 @@ import {
   Square,
   Edit,
   Star,
+  Tag,
 } from 'lucide-react'
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
@@ -511,7 +515,7 @@ function CreateQueueSheet({
                 <div className="flex flex-wrap gap-2 mt-2">
                   {Object.entries(tags).map(([key, value]) => (
                     <Badge key={key} variant="secondary" className="text-xs">
-                      {TagIcon && <TagIcon className="h-3 w-3 mr-1" />}
+                      <Tag className="h-3 w-3 mr-1" />
                       {key}: {value}
                       <button
                         type="button"
@@ -532,6 +536,143 @@ function CreateQueueSheet({
           <Button onClick={handleCreate} disabled={creating} className="flex-1">
             <Plus className="h-4 w-4 mr-2" />
             {creating ? 'Creating...' : 'Create Queue'}
+          </Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={creating}>
+            Cancel
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function BatchCreateQueueSheet({
+  open,
+  onOpenChange,
+  onSuccess,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess: () => void
+}) {
+  const [jsonInput, setJsonInput] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  // Set default template when opening
+  useEffect(() => {
+    if (open) {
+      const template = JSON.stringify(
+        [
+          { queueName: 'worker-1', queueType: 'Standard' },
+          { queueName: 'worker-2', queueType: 'Standard' },
+          { queueName: 'worker-3', queueType: 'Standard' },
+        ],
+        null,
+        2
+      )
+      setJsonInput(template)
+    }
+  }, [open])
+
+  const handleCreate = async () => {
+    if (!jsonInput.trim()) {
+      toast.error('Please enter queue configurations')
+      return
+    }
+
+    let queues: unknown
+    try {
+      queues = JSON.parse(jsonInput)
+    } catch {
+      toast.error('Invalid JSON format')
+      return
+    }
+
+    if (!Array.isArray(queues)) {
+      toast.error('Root must be an array of queue objects')
+      return
+    }
+
+    if (queues.length === 0) {
+      toast.error('At least one queue is required')
+      return
+    }
+
+    // Validate each entry has queueName
+    for (let i = 0; i < queues.length; i++) {
+      const entry = queues[i]
+      if (typeof entry !== 'object' || entry === null || !('queueName' in entry)) {
+        toast.error(`Entry ${i + 1} must have a queueName`)
+        return
+      }
+    }
+
+    try {
+      setCreating(true)
+      const request: SQSCreateQueueBatchRequest = { queues }
+      const response = await createSQSQueuesBatch(request)
+
+      if (response.failed.length > 0) {
+        toast.error(
+          `Created ${response.successful.length}, Failed ${response.failed.length}: ${response.failed.map((f) => f.error).join('; ')}`
+        )
+      } else {
+        toast.success(`Created ${response.successful.length} queue(s) successfully`)
+      }
+
+      if (response.successful.length > 0) {
+        onSuccess()
+        setJsonInput('')
+        onOpenChange(false)
+      }
+    } catch (error) {
+      toast.error(`Failed to create queues: ${error}`)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="sm:max-w-2xl overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <Plus className="h-5 w-5" />
+            Batch Create Queues
+          </SheetTitle>
+        </SheetHeader>
+
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="batch-json">Queue Configurations (JSON Array)</Label>
+            <p className="text-xs text-muted-foreground">
+              Enter an array of queue objects.
+            </p>
+            <Textarea
+              id="batch-json"
+              value={jsonInput}
+              onChange={(e) => setJsonInput(e.target.value)}
+              className="font-mono text-xs h-64"
+              placeholder='[{"queueName":"worker-1","queueType":"Standard"}]'
+            />
+          </div>
+
+          <div className="text-xs text-muted-foreground">
+            <p>Available properties per queue:</p>
+            <ul className="list-disc pl-4 mt-1">
+              <li>queueName (required)</li>
+              <li>queueType: "Standard" | "FIFO"</li>
+              <li>visibilityTimeout, messageRetentionPeriod, delaySeconds</li>
+              <li>dlqEnabled, maxReceiveCount</li>
+              <li>tags: {`{ "key": "value" }`}</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-6">
+          <Button onClick={handleCreate} disabled={creating} className="flex-1">
+            <Plus className="h-4 w-4 mr-2" />
+            {creating ? 'Creating...' : 'Create Queues'}
           </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={creating}>
             Cancel
@@ -680,8 +821,6 @@ function EditSettingsSheet({
   const [delaySeconds, setDelaySeconds] = useState(0)
   const [maximumMessageSize, setMaximumMessageSize] = useState(262144)
   const [receiveMessageWaitTime, setReceiveMessageWaitTime] = useState(0)
-  const { activeEndpoint } = useEndpoint()
-  const [deleting, setDeleting] = useState(false)
 
   // DLQ settings
   const [dlqEnabled, setDlqEnabled] = useState(false)
@@ -740,10 +879,6 @@ function EditSettingsSheet({
 
       toast.success('Queue settings updated successfully')
       onSuccess()
-      setDeleting(true)
-      await deleteSQSMessage(queueName, message.receiptHandle, activeEndpoint)
-      toast.success('Message deleted')
-      onDelete()
       onOpenChange(false)
     } catch (error) {
       toast.error(`Failed to update settings: ${error}`)
@@ -2025,6 +2160,7 @@ export function SQSBrowser() {
   // New state for batch operations and settings
   const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set())
   const [batchSendSheetOpen, setBatchSendSheetOpen] = useState(false)
+  const [batchCreateSheetOpen, setBatchCreateSheetOpen] = useState(false)
   const [editSettingsSheetOpen, setEditSettingsSheetOpen] = useState(false)
 
   // Confirmation sheets state
@@ -2335,13 +2471,18 @@ export function SQSBrowser() {
                 setSearch(e.target.value)
                 setPage(0)
               }}
-              className="pl-9"
+              className="pl-9 h-9"
               disabled={true}
             />
           </div>
+          <ImportButton service="sqs" onComplete={() => void refreshQueues()} />
           <Button onClick={() => setCreateSheetOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Create Queue
+          </Button>
+          <Button onClick={() => setBatchCreateSheetOpen(true)} variant="secondary">
+            <Plus className="h-4 w-4 mr-2" />
+            Batch Create
           </Button>
           <Button
             variant="ghost"
@@ -2361,6 +2502,13 @@ export function SQSBrowser() {
         <CreateQueueSheet
           open={createSheetOpen}
           onOpenChange={setCreateSheetOpen}
+          onSuccess={async () => {
+            await refreshQueues()
+          }}
+        />
+        <BatchCreateQueueSheet
+          open={batchCreateSheetOpen}
+          onOpenChange={setBatchCreateSheetOpen}
           onSuccess={async () => {
             await refreshQueues()
           }}
@@ -2841,13 +2989,18 @@ export function SQSBrowser() {
               setSearch(e.target.value)
               setPage(0)
             }}
-            className="pl-9"
+            className="pl-9 h-9"
           />
         </div>
+        <ImportButton service="sqs" onComplete={() => void refreshQueues()} />
         {filteredQueues.length > 0 && <ExportDropdown service="sqs" resourceType="queues" data={filteredQueues as unknown as Record<string, unknown>[]} />}
         <Button onClick={() => setCreateSheetOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Create Queue
+        </Button>
+        <Button onClick={() => setBatchCreateSheetOpen(true)} variant="secondary">
+          <Plus className="h-4 w-4 mr-2" />
+          Batch Create
         </Button>
         <Button
           variant="ghost"
@@ -3014,6 +3167,13 @@ export function SQSBrowser() {
       <CreateQueueSheet
         open={createSheetOpen}
         onOpenChange={setCreateSheetOpen}
+        onSuccess={async () => {
+          await refreshQueues()
+        }}
+      />
+      <BatchCreateQueueSheet
+        open={batchCreateSheetOpen}
+        onOpenChange={setBatchCreateSheetOpen}
         onSuccess={async () => {
           await refreshQueues()
         }}

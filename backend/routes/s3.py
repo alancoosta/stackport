@@ -218,6 +218,28 @@ class CreateFolderBody(BaseModel):
         return self
 
 
+class CreateBucketBody(BaseModel):
+    name: str
+
+    @model_validator(mode="after")
+    def validate_name(self):
+        name = self.name.strip().lower()
+        # S3 bucket naming rules
+        if not (3 <= len(name) <= 63):
+            raise ValueError("Bucket name must be between 3 and 63 characters")
+        if not name[0].isalnum() or not name[-1].isalnum():
+            raise ValueError("Bucket name must start and end with a letter or number")
+        if ".." in name:
+            raise ValueError('Bucket name cannot contain ".."')
+        # Only lowercase letters, numbers, dots, and hyphens
+        import re
+
+        if not re.match(r"^[a-z0-9.-]+$", name):
+            raise ValueError("Bucket name can only contain lowercase letters, numbers, dots, and hyphens")
+        self.name = name
+        return self
+
+
 def _validate_object_key(key: str) -> None:
     if ".." in key or key.startswith("/"):
         raise HTTPException(status_code=400, detail="Invalid key")
@@ -272,6 +294,35 @@ def create_folder(name: str, body: CreateFolderBody, endpoint_url: str | None = 
     s3.put_object(Bucket=name, Key=prefix, Body=b"", ContentType="application/x-directory")
     _invalidate_bucket_stats(name, endpoint_url)
     return {"bucket": name, "prefix": prefix}
+
+
+@router.post("/buckets")
+def create_bucket(body: CreateBucketBody, endpoint_url: str | None = Depends(get_endpoint_url)):
+    """Create a new S3 bucket."""
+    s3 = get_client("s3", endpoint_url)
+    from backend.config import AWS_REGION
+
+    params: dict = {"Bucket": body.name}
+    # us-east-1 doesn't need LocationConstraint
+    if AWS_REGION != "us-east-1":
+        params["CreateBucketConfiguration"] = {"LocationConstraint": AWS_REGION}
+
+    s3.create_bucket(**params)
+    return {"bucket": body.name, "region": AWS_REGION}
+
+
+@router.delete("/buckets/{name}")
+def delete_bucket(name: str, endpoint_url: str | None = Depends(get_endpoint_url)):
+    """Delete an S3 bucket. Bucket must be empty."""
+    s3 = get_client("s3", endpoint_url)
+    try:
+        s3.delete_bucket(Bucket=name)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("BucketNotEmpty", "NoSuchBucket"):
+            raise HTTPException(status_code=400, detail=f"Cannot delete bucket: {code}") from e
+        raise
+    return {"bucket": name, "deleted": True}
 
 
 @router.post("/buckets/{name}/objects")
